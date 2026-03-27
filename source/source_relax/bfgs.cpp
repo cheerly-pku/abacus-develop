@@ -4,7 +4,6 @@
 #include "ions_move_basic.h"
 #include "source_cell/update_cell.h"
 #include "source_cell/print_cell.h" // lanshuyue add 2025-06-19  
-
 //! initialize H0、H、pos0、force0、force
 void BFGS::allocate(const int _size) 
 {
@@ -30,8 +29,6 @@ void BFGS::allocate(const int _size)
     force = std::vector<ModuleBase::Vector3<double>>(size, ModuleBase::Vector3<double>(0.0, 0.0, 0.0));
     steplength = std::vector<double>(size, 0.0);  
 }
-
-
 void BFGS::relax_step(const ModuleBase::matrix& _force,UnitCell& ucell) 
 {
     GetPos(ucell,pos);  
@@ -77,7 +74,6 @@ void BFGS::relax_step(const ModuleBase::matrix& _force,UnitCell& ucell)
    // print out geometry information during bfgs_trad relax 
     unitcell::print_tau(ucell.atoms,ucell.Coordinate,ucell.ntype,ucell.lat0,GlobalV::ofs_running);
 }
-
 void BFGS::GetPos(UnitCell& ucell,std::vector<ModuleBase::Vector3<double>>& pos)
 {
     assert(pos.size() == ucell.nat);
@@ -93,7 +89,6 @@ void BFGS::GetPos(UnitCell& ucell,std::vector<ModuleBase::Vector3<double>>& pos)
         k+=ucell.atoms[i].na;
     }
 }
-
 void BFGS::GetPostaud(UnitCell& ucell,
                       std::vector<ModuleBase::Vector3<double>>& pos_taud)
 {
@@ -110,7 +105,6 @@ void BFGS::GetPostaud(UnitCell& ucell,
         k+=ucell.atoms[i].na;
     }
 }
-
 void BFGS::PrepareStep(std::vector<ModuleBase::Vector3<double>>& force,
                        std::vector<ModuleBase::Vector3<double>>& pos,
                        std::vector<std::vector<double>>& H,
@@ -125,21 +119,32 @@ void BFGS::PrepareStep(std::vector<ModuleBase::Vector3<double>>& force,
     std::vector<double> changedpos = ReshapeMToV(pos);
     this->Update(changedpos, changedforce,H,ucell);
     
-    //! call dysev
-    std::vector<double> omega(3*size);
-    std::vector<double> work(3*size*3*size);
-    int lwork=3*size*3*size;
-    int info=0;
+    //! call dsyev to diagonalize the Hessian matrix H
+    //! lwork = hessian_dim^2 may overflow int when size is large; check before casting
+    int hessian_dim = 3 * size;
+    if (static_cast<long long>(hessian_dim) * static_cast<long long>(hessian_dim)
+        > static_cast<long long>(std::numeric_limits<int>::max()))
+    {
+        throw std::overflow_error(
+            "BFGS::PrepareStep: lwork = (3*size)^2 overflows int, system is too large.");
+    }
+    int lwork = hessian_dim * hessian_dim;
+
+    std::vector<double> omega(hessian_dim);
+    std::vector<double> work(lwork);
+    int info = 0;
+
     std::vector<double> H_flat;
-    
+    H_flat.reserve(hessian_dim * hessian_dim);
     for(const auto& row : H)
     {
         H_flat.insert(H_flat.end(), row.begin(), row.end());
     }
-    
-    int value=3*size;
-    int* ptr=&value;
+
+    int value = hessian_dim;
+    int* ptr = &value;
     dsyev_("V","U",ptr,H_flat.data(),ptr,omega.data(),work.data(),&lwork,&info);
+
     std::vector<std::vector<double>> V(3*size, std::vector<double>(3*size, 0.0));
     for(int i = 0; i < 3*size; i++)
     {
@@ -170,7 +175,6 @@ void BFGS::PrepareStep(std::vector<ModuleBase::Vector3<double>>& force,
     pos_taud0=ReshapeMToV(pos_taud);
     force0 = ReshapeMToV(force);
 }
-
 void BFGS::Update(std::vector<double>& pos, 
                   std::vector<double>& force,
                   std::vector<std::vector<double>>& H,
@@ -205,13 +209,11 @@ void BFGS::Update(std::vector<double>& pos,
     {
         //Cartesian coordinate
         //convert from Angstrom to unit of latvec (Bohr)
-
         //convert unit
         ModuleBase::Vector3<double> move_ion_cart;
         move_ion_cart.x = c[iat].x * ModuleBase::BOHR_TO_A * ucell.lat0;
         move_ion_cart.y = c[iat].y * ModuleBase::BOHR_TO_A * ucell.lat0;
         move_ion_cart.z = c[iat].z * ModuleBase::BOHR_TO_A * ucell.lat0;
-
         //convert pos
         ModuleBase::Vector3<double> move_ion_dr = move_ion_cart* ucell.latvec;
         int it = ucell.iat2it[iat];
@@ -246,7 +248,6 @@ void BFGS::Update(std::vector<double>& pos,
     H = MSubM(H, term3);
     H = MSubM(H, term4);
 }
-
 void BFGS::DetermineStep(std::vector<double>& steplength,
                          std::vector<ModuleBase::Vector3<double>>& dpos,
                          double& maxstep)
@@ -266,7 +267,6 @@ void BFGS::DetermineStep(std::vector<double>& steplength,
         }
     }
 }
-
 void BFGS::UpdatePos(UnitCell& ucell)
 {
     double a[3*size];
@@ -279,28 +279,22 @@ void BFGS::UpdatePos(UnitCell& ucell)
     unitcell::update_pos_tau(ucell.lat,a,ucell.ntype,ucell.nat,ucell.atoms);
     /*double move_ion[3*size];
     ModuleBase::zeros(move_ion, size*3);
-
     for(int iat=0; iat<size; iat++)
     {
         //Cartesian coordinate
         //convert from Angstrom to unit of latvec (Bohr)
-
         //convert unit
         ModuleBase::Vector3<double> move_ion_cart;
         move_ion_cart.x = dpos[iat][0] / ModuleBase::BOHR_TO_A / ucell.lat0;
         move_ion_cart.y = dpos[iat][1] / ModuleBase::BOHR_TO_A / ucell.lat0;
         move_ion_cart.z = dpos[iat][2] / ModuleBase::BOHR_TO_A / ucell.lat0;
-
         //convert to Direct coordinate
         //note here the old GT is used
-
         //convert pos
         ModuleBase::Vector3<double> move_ion_dr = move_ion_cart* ucell.GT;
-
         int it = ucell.iat2it[iat];
         int ia = ucell.iat2ia[iat];
         Atom* atom = &ucell.atoms[it];
-
         if(atom->mbl[ia].x == 1)
         {
             move_ion[iat * 3] = move_ion_dr.x;
@@ -314,10 +308,9 @@ void BFGS::UpdatePos(UnitCell& ucell)
             move_ion[iat * 3 + 2] = move_ion_dr.z ;
         }
     }
-	ucell.update_pos_taud(move_ion);
+ucell.update_pos_taud(move_ion);
     pos = this->MAddM(pos, dpos);*/
 }
-
 void BFGS::CalculateLargestGrad(const ModuleBase::matrix& _force,UnitCell& ucell)
 {
     std::vector<double> grad= std::vector<double>(3*size, 0.0);
@@ -354,7 +347,6 @@ void BFGS::CalculateLargestGrad(const ModuleBase::matrix& _force,UnitCell& ucell
                   << std::endl;
     }
 }
-
 void BFGS::IsRestrain()
 {
     Ions_Move_Basic::converged = largest_grad 
